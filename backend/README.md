@@ -77,17 +77,25 @@ UI с анимированным аватаром
 git clone https://github.com/AppleCherep1/HardwareChallenge.git
 cd HardwareChallenge
 
+Создать виртуальное окружение
 python -m venv venv
 venv\Scripts\activate
 
-
+Установить зависимости
 pip install -r requirements.txt
 
+Создать .env файл
 OPENAI_API_KEY=your_api_key_here
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
 OPENAI_MODEL=mistralai/mistral-7b-instruct
 
+Запустить backend
 cd backend
 python -m uvicorn app:app --reload
+```
+
+
+
+
 
 
