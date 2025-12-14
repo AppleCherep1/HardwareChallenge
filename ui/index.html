@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Virtual Reception</title>
+  <style>
+    body { margin:0; font-family: system-ui, Arial; background:#0b1220; color:#e8eefc; }
+    .wrap { display:flex; height:100vh; }
+    .left { flex:1; display:flex; align-items:center; justify-content:center; position:relative; }
+    .avatar {
+      width:min(70vh, 70vw); height:min(70vh, 70vw);
+      border-radius:24px; background:#111a30; display:flex; align-items:center; justify-content:center;
+      border:1px solid rgba(255,255,255,.12);
+    }
+    .avatar span { opacity:.75; font-size:22px; text-align:center; padding:24px; }
+    .status { position:absolute; top:18px; left:18px; padding:8px 12px; border-radius:999px;
+      background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.10); }
+    .right { width:520px; max-width:45vw; border-left:1px solid rgba(255,255,255,.10);
+      padding:18px; display:flex; flex-direction:column; gap:12px; background:#0f1730; }
+    .card { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.10);
+      border-radius:16px; padding:14px; }
+    .label { opacity:.7; font-size:12px; margin-bottom:6px; }
+    .txt { font-size:16px; line-height:1.35; white-space:pre-wrap; }
+    .result { font-size:18px; line-height:1.35; font-weight:700; }
+    .btns { display:flex; gap:10px; margin-top:auto; }
+    button { flex:1; padding:14px 12px; border-radius:14px; border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.08); color:#e8eefc; font-size:16px; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .hint { opacity:.7; font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="left">
+      <div class="status" id="mode">mode: ...</div>
+      <div class="avatar">
+        <img id="avatarImg" src="/ui/avatar_idle.png" alt="avatar"
+             style="width:100%; height:100%; object-fit:cover; border-radius:24px;">
+      </div>
+
+    </div>
+
+    <div class="right">
+      <div class="card">
+        <div class="label">Посетитель сказал</div>
+        <div class="txt" id="userText">—</div>
+      </div>
+
+      <div class="card">
+        <div class="label">Ответ консультанта</div>
+        <div class="txt" id="replyText">—</div>
+      </div>
+
+      <div class="card">
+        <div class="label">Итог (куда пройти)</div>
+        <div class="result" id="resultText">—</div>
+        <div class="hint">Итог берётся из строки «РЕЗУЛЬТАТ: ...» в ответе.</div>
+      </div>
+
+      <div class="btns">
+        <button id="startBtn">🎙️ Сказать (5 сек)</button>
+        <button id="resetBtn">↩️ Сброс</button>
+      </div>
+      <div class="hint">Подсказка: если шумно — говори чётко рядом с микрофоном.</div>
+    </div>
+  </div>
+
+<script>
+const API = "http://127.0.0.1:8000";
+
+const modeEl = document.getElementById("mode");
+const avatarImg = document.getElementById("avatarImg");
+const userEl = document.getElementById("userText");
+const replyEl = document.getElementById("replyText");
+const resultEl = document.getElementById("resultText");
+const startBtn = document.getElementById("startBtn");
+const resetBtn = document.getElementById("resetBtn");
+
+function extractResult(reply) {
+  const m = reply.match(/РЕЗУЛЬТАТ:\s*(.+)/i);
+  return m ? m[1].trim() : "—";
+}
+
+function speak(text) {
+  if (!("speechSynthesis" in window)) {
+    console.log("TTS не поддерживается в этом браузере");
+    return;
+  }
+
+  // остановить предыдущую озвучку
+  window.speechSynthesis.cancel();
+
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "ru-RU";
+  u.rate = 1.0;   // скорость
+  u.pitch = 1.0;  // тон
+
+  // попытаться выбрать русский голос (если есть)
+  const voices = window.speechSynthesis.getVoices();
+  const ru = voices.find(v => (v.lang || "").toLowerCase().startsWith("ru"));
+  if (ru) u.voice = ru;
+
+  // аватар "говорит" во время TTS
+  if (typeof avatarImg !== "undefined" && avatarImg) {
+    u.onstart = () => { avatarImg.src = "/ui/avatar_talk.png"; };
+    u.onend   = () => { avatarImg.src = "/ui/avatar_idle.png"; };
+    u.onerror = () => { avatarImg.src = "/ui/avatar_idle.png"; };
+  }
+
+  window.speechSynthesis.speak(u);
+}
+
+// важно: иногда голоса подгружаются не сразу
+window.speechSynthesis.onvoiceschanged = () => {
+  window.speechSynthesis.getVoices();
+};
+
+async function refreshStatus() {
+  try {
+    const r = await fetch(API + "/status");
+    const s = await r.json();
+    const mode = (s.mode || "idle");
+    modeEl.textContent = "mode: " + mode;
+
+    // Хак: speaking -> talk, иначе idle
+    if (mode === "speaking") {
+      avatarImg.src = "/ui/avatar_talk.png";
+    } else {
+      avatarImg.src = "/ui/avatar_idle.png";
+    }
+
+  } catch (e) {
+    modeEl.textContent = "mode: offline";
+  }
+}
+
+async function doStep() {
+  startBtn.disabled = true;
+  startBtn.textContent = "⏳ Запись/обработка...";
+  try {
+    const r = await fetch(API + "/step", { method: "POST" });
+    const j = await r.json();
+    userEl.textContent = j.user_text || "—";
+    replyEl.textContent = j.reply || "—";
+    resultEl.textContent = extractResult(j.reply || "");
+    // озвучиваем ответ (без строки "РЕЗУЛЬТАТ", чтобы звучало по-человечески)
+    const spoken = (j.reply || "").replace(/РЕЗУЛЬТАТ:.*$/i, "").trim();
+    if (spoken) speak(spoken);
+  } catch (e) {
+    replyEl.textContent = "Ошибка. Проверь, что backend запущен.";
+  } finally {
+    startBtn.disabled = false;
+    startBtn.textContent = "🎙️ Сказать (5 сек)";
+  }
+}
+
+async function doReset() {
+  await fetch(API + "/reset", { method: "POST" });
+  userEl.textContent = "—";
+  replyEl.textContent = "—";
+  resultEl.textContent = "—";
+}
+
+startBtn.onclick = doStep;
+resetBtn.onclick = doReset;
+
+setInterval(refreshStatus, 500);
+refreshStatus();
+</script>
+</body>
+</html>
